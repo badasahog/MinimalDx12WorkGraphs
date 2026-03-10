@@ -1,6 +1,7 @@
+#define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 #include <windows.h>
 
-#define COBJMACROS
 #include <dxgi1_6.h>
 #include <d3d12.h>
 
@@ -83,7 +84,7 @@ inline void MEMCPY_VERIFY_IMPL(errno_t error, int line)
 static const SIZE_T UAV_SIZE = 1024;
 
 static const wchar_t* const PROGRAM_NAME = L"Hello World";
-static const bool bWarp = false;
+static const bool bWarp = true;
 
 int main()
 {
@@ -170,7 +171,7 @@ int main()
 		HANDLE ShaderFile = CreateFileW(L"shader.cso", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		VALIDATE_HANDLE(ShaderFile);
 
-		SIZE_T ShaderFileSize;
+		LONGLONG ShaderFileSize;
 		THROW_ON_FALSE(GetFileSizeEx(ShaderFile, &ShaderFileSize));
 
 		HANDLE ShaderFileMap = CreateFileMappingW(ShaderFile, NULL, PAGE_READONLY, 0, 0, NULL);
@@ -227,8 +228,6 @@ int main()
 		HeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		HeapProperties.CreationNodeMask = 1;
-		HeapProperties.VisibleNodeMask = 1;
 
 		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -254,35 +253,31 @@ int main()
 			&BackingMemoryResource));
 	}
 
-	//UINT test = ID3D12WorkGraphProperties_GetNumEntrypoints(WorkGraphProperties, WGIndex);
-	
 	ID3D12CommandQueue* CommandQueue;
 
 	{
 		D3D12_COMMAND_QUEUE_DESC CommandQueueDesc = { 0 };
-		CommandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT;
 		CommandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		CommandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT;
 		ID3D12Device10_CreateCommandQueue(Device, &CommandQueueDesc, &IID_ID3D12CommandQueue, &CommandQueue);
 	}
 
 	ID3D12CommandAllocator* CommandAllocator;
-	ID3D12Device10_CreateCommandAllocator(Device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, &CommandAllocator);
+	THROW_ON_FAIL(ID3D12Device10_CreateCommandAllocator(Device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, &CommandAllocator));
 
 	ID3D12GraphicsCommandList10* CommandList;
-	ID3D12Device10_CreateCommandList(Device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, CommandAllocator, NULL, &IID_ID3D12GraphicsCommandList10, &CommandList);
+	THROW_ON_FAIL(ID3D12Device10_CreateCommandList(Device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, CommandAllocator, NULL, &IID_ID3D12GraphicsCommandList10, &CommandList));
 
 	ID3D12Fence* Fence;
-	ID3D12Device10_CreateFence(Device, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, &Fence);
+	THROW_ON_FAIL(ID3D12Device10_CreateFence(Device, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, &Fence));
 
-	ID3D12Resource* pUAVBuffer;
+	ID3D12Resource* UAVBuffer;
 
 	{
 		D3D12_HEAP_PROPERTIES HeapProperties = { 0 };
 		HeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		HeapProperties.CreationNodeMask = 1;
-		HeapProperties.VisibleNodeMask = 1;
 
 		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -297,15 +292,18 @@ int main()
 		ResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		ResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource(
+		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource3(
 			Device,
 			&HeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&ResourceDesc,
-			D3D12_RESOURCE_STATE_COMMON,
+			D3D12_BARRIER_LAYOUT_UNDEFINED,
+			NULL,
+			NULL,
+			0,
 			NULL,
 			&IID_ID3D12Resource,
-			&pUAVBuffer));
+			&UAVBuffer));
 	}
 
 	ID3D12Resource* ReadbackBuffer;
@@ -315,8 +313,6 @@ int main()
 		HeapProperties.Type = D3D12_HEAP_TYPE_READBACK;
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		HeapProperties.CreationNodeMask = 1;
-		HeapProperties.VisibleNodeMask = 1;
 
 		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -343,7 +339,7 @@ int main()
 	}
 
 	ID3D12GraphicsCommandList10_SetComputeRootSignature(CommandList, GlobalRootSignature);
-	ID3D12GraphicsCommandList10_SetComputeRootUnorderedAccessView(CommandList, 0, ID3D12Resource_GetGPUVirtualAddress(pUAVBuffer));
+	ID3D12GraphicsCommandList10_SetComputeRootUnorderedAccessView(CommandList, 0, ID3D12Resource_GetGPUVirtualAddress(UAVBuffer));
 
 	{
 		D3D12_SET_PROGRAM_DESC SetProgramDesc = { 0 };
@@ -368,16 +364,23 @@ int main()
 	}
 
 	{
-		D3D12_RESOURCE_BARRIER Barrier = { 0 };
-		Barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		Barrier.Transition.pResource = pUAVBuffer;
-		Barrier.Transition.Subresource = 0;
-		Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-		ID3D12GraphicsCommandList10_ResourceBarrier(CommandList, 1, &Barrier);
+		D3D12_BUFFER_BARRIER BufferBarrier = { 0 };
+		BufferBarrier.SyncBefore = D3D12_BARRIER_SYNC_ALL;
+		BufferBarrier.SyncAfter = D3D12_BARRIER_SYNC_COPY;
+		BufferBarrier.AccessBefore = D3D12_BARRIER_ACCESS_UNORDERED_ACCESS;
+		BufferBarrier.AccessAfter = D3D12_BARRIER_ACCESS_COPY_SOURCE;
+		BufferBarrier.pResource = UAVBuffer;
+		BufferBarrier.Offset = 0;
+		BufferBarrier.Size = UAV_SIZE;
+
+		D3D12_BARRIER_GROUP ResourceBarrier = { 0 };
+		ResourceBarrier.Type = D3D12_BARRIER_TYPE_BUFFER;
+		ResourceBarrier.NumBarriers = 1;
+		ResourceBarrier.pBufferBarriers = &BufferBarrier;
+		ID3D12GraphicsCommandList10_Barrier(CommandList, 1, &ResourceBarrier);
 	}
 			
-	ID3D12GraphicsCommandList10_CopyResource(CommandList, ReadbackBuffer, pUAVBuffer);
+	ID3D12GraphicsCommandList10_CopyResource(CommandList, ReadbackBuffer, UAVBuffer);
 
 	THROW_ON_FAIL(ID3D12GraphicsCommandList10_Close(CommandList));
 
@@ -391,17 +394,16 @@ int main()
 	THROW_ON_FALSE(WaitForSingleObject(CommandListFinished, INFINITE) == WAIT_OBJECT_0);
 	THROW_ON_FALSE(CloseHandle(CommandListFinished));
 
-	ID3D12CommandAllocator_Reset(CommandAllocator);
-	ID3D12GraphicsCommandList10_Reset(CommandList, CommandAllocator, NULL);
+	THROW_ON_FAIL(ID3D12CommandAllocator_Reset(CommandAllocator));
+	THROW_ON_FAIL(ID3D12GraphicsCommandList10_Reset(CommandList, CommandAllocator, NULL));
 
 	const char* pOutput;
 	THROW_ON_FAIL(ID3D12Resource_Map(ReadbackBuffer, 0, NULL, &pOutput));
 	printf("SUCCESS: Output was \"%s\"\nPress any key to terminate...\n", pOutput);
 	ID3D12Resource_Unmap(ReadbackBuffer, 0, NULL);
 	
-
 	THROW_ON_FAIL(ID3D12Resource_Release(ReadbackBuffer));
-	THROW_ON_FAIL(ID3D12Resource_Release(pUAVBuffer));
+	THROW_ON_FAIL(ID3D12Resource_Release(UAVBuffer));
 	THROW_ON_FAIL(ID3D12Fence_Release(Fence));
 	THROW_ON_FAIL(ID3D12GraphicsCommandList10_Release(CommandList));
 	THROW_ON_FAIL(ID3D12CommandAllocator_Release(CommandAllocator));

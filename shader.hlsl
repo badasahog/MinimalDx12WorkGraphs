@@ -4,12 +4,11 @@ static const uint Message[] = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'W', 'o', 'r'
 
 void StoreByte(uint ByteOffset)
 {
-    uint AlignedOffset = (ByteOffset / 4) * 4;
     uint Shift = (ByteOffset % 4) * 8;
     uint PackedValue = Message[ByteOffset] << Shift;
 
     uint Dummy;
-    Output.InterlockedOr(AlignedOffset, PackedValue, Dummy);
+    Output.InterlockedOr(ByteOffset, PackedValue, Dummy);
 }
 
 //this is the program entry point:

@@ -1,6 +1,7 @@
+#define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 #include <windows.h>
 
-#define COBJMACROS
 #include <dxgi1_6.h>
 #include <d3d12.h>
 
@@ -83,7 +84,7 @@ inline void MEMCPY_VERIFY_IMPL(errno_t error, int line)
 static const SIZE_T UAV_SIZE = 1024;
 
 static const wchar_t* const PROGRAM_NAME = L"Hello World";
-static const bool bWarp = false;
+static const bool bWarp = true;
 
 int main()
 {
@@ -254,8 +255,6 @@ int main()
 			&BackingMemoryResource));
 	}
 
-	//UINT test = ID3D12WorkGraphProperties_GetNumEntrypoints(WorkGraphProperties, WGIndex);
-	
 	ID3D12CommandQueue* CommandQueue;
 
 	{
@@ -297,12 +296,15 @@ int main()
 		ResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		ResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource(
+		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource3(
 			Device,
 			&HeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&ResourceDesc,
-			D3D12_RESOURCE_STATE_COMMON,
+			D3D12_BARRIER_LAYOUT_UNDEFINED,
+			NULL,
+			NULL,
+			0,
 			NULL,
 			&IID_ID3D12Resource,
 			&pUAVBuffer));
@@ -368,13 +370,20 @@ int main()
 	}
 
 	{
-		D3D12_RESOURCE_BARRIER Barrier = { 0 };
-		Barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		Barrier.Transition.pResource = pUAVBuffer;
-		Barrier.Transition.Subresource = 0;
-		Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-		ID3D12GraphicsCommandList10_ResourceBarrier(CommandList, 1, &Barrier);
+		D3D12_BUFFER_BARRIER BufferBarrier = { 0 };
+		BufferBarrier.SyncBefore = D3D12_BARRIER_SYNC_ALL;
+		BufferBarrier.SyncAfter = D3D12_BARRIER_SYNC_COPY;
+		BufferBarrier.AccessBefore = D3D12_BARRIER_ACCESS_UNORDERED_ACCESS;
+		BufferBarrier.AccessAfter = D3D12_BARRIER_ACCESS_COPY_SOURCE;
+		BufferBarrier.pResource = pUAVBuffer;
+		BufferBarrier.Offset = 0;
+		BufferBarrier.Size = UAV_SIZE;
+
+		D3D12_BARRIER_GROUP ResourceBarrier = { 0 };
+		ResourceBarrier.Type = D3D12_BARRIER_TYPE_BUFFER;
+		ResourceBarrier.NumBarriers = 1;
+		ResourceBarrier.pBufferBarriers = &BufferBarrier;
+		ID3D12GraphicsCommandList10_Barrier(CommandList, 1, &ResourceBarrier);
 	}
 			
 	ID3D12GraphicsCommandList10_CopyResource(CommandList, ReadbackBuffer, pUAVBuffer);
@@ -399,7 +408,6 @@ int main()
 	printf("SUCCESS: Output was \"%s\"\nPress any key to terminate...\n", pOutput);
 	ID3D12Resource_Unmap(ReadbackBuffer, 0, NULL);
 	
-
 	THROW_ON_FAIL(ID3D12Resource_Release(ReadbackBuffer));
 	THROW_ON_FAIL(ID3D12Resource_Release(pUAVBuffer));
 	THROW_ON_FAIL(ID3D12Fence_Release(Fence));

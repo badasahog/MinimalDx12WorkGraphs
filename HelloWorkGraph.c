@@ -68,19 +68,6 @@ inline void THROW_ON_FAIL_IMPL(HRESULT hr, int line)
 
 #define VALIDATE_HANDLE(x) if((x) == NULL || (x) == INVALID_HANDLE_VALUE) THROW_ON_FAIL(HRESULT_FROM_WIN32(GetLastError()))
 
-inline void MEMCPY_VERIFY_IMPL(errno_t error, int line)
-{
-	if (error != 0)
-	{
-		char buffer[28];
-		int stringlength = _snprintf_s(buffer, 28, _TRUNCATE, "memcpy failed on line %i\n", line);
-		WriteConsoleA(ConsoleHandle, buffer, stringlength, NULL, NULL);
-		RaiseException(0, EXCEPTION_NONCONTINUABLE, 0, NULL);
-	}
-}
-
-#define MEMCPY_VERIFY(x) MEMCPY_VERIFY_IMPL(x, __LINE__)
-
 static const SIZE_T UAV_SIZE = 1024;
 
 static const wchar_t* const PROGRAM_NAME = L"Hello World";
@@ -152,17 +139,18 @@ int main()
 		RootSignatureUAV.Descriptor.RegisterSpace = 0;
 		RootSignatureUAV.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-		D3D12_ROOT_SIGNATURE_DESC Desc = { 0 };
-		Desc.NumParameters = 1;
-		Desc.pParameters = &RootSignatureUAV;
-		Desc.NumStaticSamplers = 0;
-		Desc.pStaticSamplers = NULL;
-		Desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+		D3D12_VERSIONED_ROOT_SIGNATURE_DESC RootSignatureDescription = { 0 };
+		RootSignatureDescription.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+		RootSignatureDescription.Desc_1_1.NumParameters = 1;
+		RootSignatureDescription.Desc_1_1.pParameters = &RootSignatureUAV;
+		RootSignatureDescription.Desc_1_1.NumStaticSamplers = 0;
+		RootSignatureDescription.Desc_1_1.pStaticSamplers = NULL;
+		RootSignatureDescription.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
 
-		ID3D10Blob* Serialized;
-		THROW_ON_FAIL(D3D12SerializeRootSignature(&Desc, D3D_ROOT_SIGNATURE_VERSION_1, &Serialized, NULL));
-		THROW_ON_FAIL(ID3D12Device10_CreateRootSignature(Device, 0, ID3D10Blob_GetBufferPointer(Serialized), ID3D10Blob_GetBufferSize(Serialized), &IID_ID3D12RootSignature, &GlobalRootSignature));
-		THROW_ON_FAIL(ID3D10Blob_Release(Serialized));
+		ID3D10Blob* RootSig;
+		THROW_ON_FAIL(D3D12SerializeVersionedRootSignature(&RootSignatureDescription, &RootSig, NULL));
+		THROW_ON_FAIL(ID3D12Device10_CreateRootSignature(Device, 0, ID3D10Blob_GetBufferPointer(RootSig), ID3D10Blob_GetBufferSize(RootSig), &IID_ID3D12RootSignature, &GlobalRootSignature));
+		THROW_ON_FAIL(ID3D10Blob_Release(RootSig));
 	}
 
 	ID3D12StateObject* StateObject;
@@ -179,20 +167,20 @@ int main()
 
 		const void* ShaderFilePtr = MapViewOfFile(ShaderFileMap, FILE_MAP_READ, 0, 0, 0);
 
-		D3D12_STATE_SUBOBJECT StateSubojects[3] = { 0 };
-		StateSubojects[0].Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
-		StateSubojects[0].pDesc = &GlobalRootSignature;
-
 		D3D12_DXIL_LIBRARY_DESC LibraryDesc = { 0 };
 		LibraryDesc.DXILLibrary.pShaderBytecode = ShaderFilePtr;
 		LibraryDesc.DXILLibrary.BytecodeLength = ShaderFileSize;
 
-		StateSubojects[1].Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
-		StateSubojects[1].pDesc = &LibraryDesc;
-
 		D3D12_WORK_GRAPH_DESC WorkGraphDesc = { 0 };
 		WorkGraphDesc.ProgramName = PROGRAM_NAME;
 		WorkGraphDesc.Flags = D3D12_WORK_GRAPH_FLAG_INCLUDE_ALL_AVAILABLE_NODES;
+
+		D3D12_STATE_SUBOBJECT StateSubojects[3] = { 0 };
+		StateSubojects[0].Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+		StateSubojects[0].pDesc = &GlobalRootSignature;
+
+		StateSubojects[1].Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+		StateSubojects[1].pDesc = &LibraryDesc;
 
 		StateSubojects[2].Type = D3D12_STATE_SUBOBJECT_TYPE_WORK_GRAPH;
 		StateSubojects[2].pDesc = &WorkGraphDesc;
@@ -211,17 +199,18 @@ int main()
 
 	ID3D12Resource* BackingMemoryResource = NULL;
 
-	ID3D12StateObjectProperties1* StateObjectProperties;
-	ID3D12WorkGraphProperties* WorkGraphProperties;
-
-	THROW_ON_FAIL(ID3D12StateObject_QueryInterface(StateObject, &IID_ID3D12StateObjectProperties1, &StateObjectProperties));
-	THROW_ON_FAIL(ID3D12StateObject_QueryInterface(StateObject, &IID_ID3D12WorkGraphProperties, &WorkGraphProperties));
-
-	UINT WGIndex = ID3D12WorkGraphProperties_GetWorkGraphIndex(WorkGraphProperties, PROGRAM_NAME);
-
 	D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS MemoryRequirements = { 0 };
-	ID3D12WorkGraphProperties_GetWorkGraphMemoryRequirements(WorkGraphProperties, WGIndex, &MemoryRequirements);
 
+	{
+		ID3D12WorkGraphProperties* WorkGraphProperties;
+		THROW_ON_FAIL(ID3D12StateObject_QueryInterface(StateObject, &IID_ID3D12WorkGraphProperties, &WorkGraphProperties));
+
+		UINT WGIndex = ID3D12WorkGraphProperties_GetWorkGraphIndex(WorkGraphProperties, PROGRAM_NAME);
+		ID3D12WorkGraphProperties_GetWorkGraphMemoryRequirements(WorkGraphProperties, WGIndex, &MemoryRequirements);
+
+		THROW_ON_FAIL(ID3D12WorkGraphProperties_Release(WorkGraphProperties));
+	}
+	
 	if (MemoryRequirements.MaxSizeInBytes > 0)
 	{
 		D3D12_HEAP_PROPERTIES HeapProperties = { 0 };
@@ -229,7 +218,7 @@ int main()
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
-		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
+		D3D12_RESOURCE_DESC1 ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		ResourceDesc.Alignment = 0;
 		ResourceDesc.Width = MemoryRequirements.MaxSizeInBytes;
@@ -242,12 +231,15 @@ int main()
 		ResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 		ResourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource(
+		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource3(
 			Device,
 			&HeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&ResourceDesc,
-			D3D12_RESOURCE_STATE_COMMON,
+			D3D12_BARRIER_LAYOUT_UNDEFINED,
+			NULL,
+			NULL,
+			0,
 			NULL,
 			&IID_ID3D12Resource,
 			&BackingMemoryResource));
@@ -257,16 +249,16 @@ int main()
 
 	{
 		D3D12_COMMAND_QUEUE_DESC CommandQueueDesc = { 0 };
-		CommandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-		CommandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT;
+		CommandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+		CommandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 		ID3D12Device10_CreateCommandQueue(Device, &CommandQueueDesc, &IID_ID3D12CommandQueue, &CommandQueue);
 	}
 
 	ID3D12CommandAllocator* CommandAllocator;
-	THROW_ON_FAIL(ID3D12Device10_CreateCommandAllocator(Device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, &CommandAllocator));
+	THROW_ON_FAIL(ID3D12Device10_CreateCommandAllocator(Device, D3D12_COMMAND_LIST_TYPE_COMPUTE, &IID_ID3D12CommandAllocator, &CommandAllocator));
 
 	ID3D12GraphicsCommandList10* CommandList;
-	THROW_ON_FAIL(ID3D12Device10_CreateCommandList(Device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, CommandAllocator, NULL, &IID_ID3D12GraphicsCommandList10, &CommandList));
+	THROW_ON_FAIL(ID3D12Device10_CreateCommandList(Device, 0, D3D12_COMMAND_LIST_TYPE_COMPUTE, CommandAllocator, NULL, &IID_ID3D12GraphicsCommandList10, &CommandList));
 
 	ID3D12Fence* Fence;
 	THROW_ON_FAIL(ID3D12Device10_CreateFence(Device, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, &Fence));
@@ -279,7 +271,7 @@ int main()
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
-		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
+		D3D12_RESOURCE_DESC1 ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		ResourceDesc.Alignment = 0;
 		ResourceDesc.Width = UAV_SIZE;
@@ -314,7 +306,7 @@ int main()
 		HeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		HeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
-		D3D12_RESOURCE_DESC ResourceDesc = { 0 };
+		D3D12_RESOURCE_DESC1 ResourceDesc = { 0 };
 		ResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 		ResourceDesc.Alignment = 0;
 		ResourceDesc.Width = UAV_SIZE;
@@ -325,14 +317,17 @@ int main()
 		ResourceDesc.SampleDesc.Count = 1;
 		ResourceDesc.SampleDesc.Quality = 0;
 		ResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-		ResourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		ResourceDesc.Flags = D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
 
-		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource(
+		THROW_ON_FAIL(ID3D12Device10_CreateCommittedResource3(
 			Device,
 			&HeapProperties,
 			D3D12_HEAP_FLAG_NONE,
 			&ResourceDesc,
-			D3D12_RESOURCE_STATE_COMMON,
+			D3D12_BARRIER_LAYOUT_UNDEFINED,
+			NULL,
+			NULL,
+			0,
 			NULL,
 			&IID_ID3D12Resource,
 			&ReadbackBuffer));
@@ -344,7 +339,14 @@ int main()
 	{
 		D3D12_SET_PROGRAM_DESC SetProgramDesc = { 0 };
 		SetProgramDesc.Type = D3D12_PROGRAM_TYPE_WORK_GRAPH;
-		ID3D12StateObjectProperties1_GetProgramIdentifier(StateObjectProperties, &SetProgramDesc.WorkGraph.ProgramIdentifier, PROGRAM_NAME);
+
+		{
+			ID3D12StateObjectProperties1* StateObjectProperties;
+			THROW_ON_FAIL(ID3D12StateObject_QueryInterface(StateObject, &IID_ID3D12StateObjectProperties1, &StateObjectProperties));
+			ID3D12StateObjectProperties1_GetProgramIdentifier(StateObjectProperties, &SetProgramDesc.WorkGraph.ProgramIdentifier, PROGRAM_NAME);
+			THROW_ON_FAIL(ID3D12StateObjectProperties1_Release(StateObjectProperties));
+		}
+
 		SetProgramDesc.WorkGraph.Flags = D3D12_SET_WORK_GRAPH_FLAG_INITIALIZE;
 		if (BackingMemoryResource)
 		{
@@ -408,8 +410,6 @@ int main()
 	THROW_ON_FAIL(ID3D12GraphicsCommandList10_Release(CommandList));
 	THROW_ON_FAIL(ID3D12CommandAllocator_Release(CommandAllocator));
 	THROW_ON_FAIL(ID3D12CommandQueue_Release(CommandQueue));
-	THROW_ON_FAIL(ID3D12WorkGraphProperties_Release(WorkGraphProperties));
-	THROW_ON_FAIL(ID3D12StateObjectProperties1_Release(StateObjectProperties));
 	if(BackingMemoryResource)
 		THROW_ON_FAIL(ID3D12Resource_Release(BackingMemoryResource));
 	THROW_ON_FAIL(ID3D12StateObject_Release(StateObject));

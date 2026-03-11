@@ -71,7 +71,7 @@ inline void THROW_ON_FAIL_IMPL(HRESULT hr, int line)
 static const SIZE_T UAV_SIZE = 1024;
 
 static const wchar_t* const PROGRAM_NAME = L"Hello World";
-static const bool bWarp = true;
+static const bool bWarp = false;
 
 int main()
 {
@@ -130,7 +130,7 @@ int main()
 			ExitProcess(0);
 	}
 
-	ID3D12RootSignature* GlobalRootSignature;
+	ID3D12RootSignature* RootSignature;
 
 	{
 		D3D12_ROOT_PARAMETER RootSignatureUAV = { 0 };
@@ -149,7 +149,7 @@ int main()
 
 		ID3D10Blob* RootSig;
 		THROW_ON_FAIL(D3D12SerializeVersionedRootSignature(&RootSignatureDescription, &RootSig, NULL));
-		THROW_ON_FAIL(ID3D12Device10_CreateRootSignature(Device, 0, ID3D10Blob_GetBufferPointer(RootSig), ID3D10Blob_GetBufferSize(RootSig), &IID_ID3D12RootSignature, &GlobalRootSignature));
+		THROW_ON_FAIL(ID3D12Device10_CreateRootSignature(Device, 0, ID3D10Blob_GetBufferPointer(RootSig), ID3D10Blob_GetBufferSize(RootSig), &IID_ID3D12RootSignature, &RootSignature));
 		THROW_ON_FAIL(ID3D10Blob_Release(RootSig));
 	}
 
@@ -177,7 +177,7 @@ int main()
 
 		D3D12_STATE_SUBOBJECT StateSubojects[3] = { 0 };
 		StateSubojects[0].Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
-		StateSubojects[0].pDesc = &GlobalRootSignature;
+		StateSubojects[0].pDesc = &RootSignature;
 
 		StateSubojects[1].Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
 		StateSubojects[1].pDesc = &LibraryDesc;
@@ -333,7 +333,7 @@ int main()
 			&ReadbackBuffer));
 	}
 
-	ID3D12GraphicsCommandList10_SetComputeRootSignature(CommandList, GlobalRootSignature);
+	ID3D12GraphicsCommandList10_SetComputeRootSignature(CommandList, RootSignature);
 	ID3D12GraphicsCommandList10_SetComputeRootUnorderedAccessView(CommandList, 0, ID3D12Resource_GetGPUVirtualAddress(UAVBuffer));
 
 	{
@@ -391,7 +391,6 @@ int main()
 
 	HANDLE CommandListFinished = CreateEventW(NULL, FALSE, FALSE, NULL);
 	VALIDATE_HANDLE(CommandListFinished);
-
 	THROW_ON_FAIL(ID3D12Fence_SetEventOnCompletion(Fence, 1, CommandListFinished));
 	THROW_ON_FALSE(WaitForSingleObject(CommandListFinished, INFINITE) == WAIT_OBJECT_0);
 	THROW_ON_FALSE(CloseHandle(CommandListFinished));
@@ -413,7 +412,7 @@ int main()
 	if(BackingMemoryResource)
 		THROW_ON_FAIL(ID3D12Resource_Release(BackingMemoryResource));
 	THROW_ON_FAIL(ID3D12StateObject_Release(StateObject));
-	THROW_ON_FAIL(ID3D12RootSignature_Release(GlobalRootSignature));
+	THROW_ON_FAIL(ID3D12RootSignature_Release(RootSignature));
 
 #ifdef _DEBUG
 	THROW_ON_FAIL(ID3D12InfoQueue_Release(InfoQueue));

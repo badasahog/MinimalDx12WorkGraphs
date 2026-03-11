@@ -1,35 +1,39 @@
-globallycoherent RWByteAddressBuffer Output : register(u0);
+RWByteAddressBuffer Output : register(u0);
 
-static const uint Message[] = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'W', 'o', 'r', 'l', 'd', '!' };
+static const uint Message[] = {
+	'H', 'e', 'l', 'l', 'o', ',', ' ', 'W', 'o', 'r', 'l', 'd', '!'
+};
 
 void StoreByte(uint ByteOffset)
 {
-    uint Shift = (ByteOffset % 4) * 8;
-    uint PackedValue = Message[ByteOffset] << Shift;
+	const uint AlignedOffset = (ByteOffset / 4) * 4;
+	const uint Shift = (ByteOffset % 4) * 8;
+	const uint PackedValue = Message[ByteOffset] << Shift;
 
-    uint Dummy;
-    Output.InterlockedOr(ByteOffset, PackedValue, Dummy);
+	uint Dummy;
+	Output.InterlockedOr(AlignedOffset, PackedValue, Dummy);
 }
 
 //this is the program entry point:
 [Shader("node")]
 [NodeLaunch("thread")]
-void myProducer(
-    [MaxRecords(1)]
-    EmptyNodeOutput MyConsumer
+[NodeIsProgramEntry]
+[Numthreads(1, 1, 1)]
+void MyProducer(
+	[MaxRecords(1)] [NodeID("MyConsumer")] EmptyNodeOutput MyCons
 )
 {
-    MyConsumer.ThreadIncrementOutputCount(1);
+	MyCons.ThreadIncrementOutputCount(1);
 }
 
 [Shader("node")]
 [NodeLaunch("broadcasting")]
-[NumThreads(13, 1, 1)]
+[NumThreads(sizeof(Message) / sizeof(Message[0]), 1, 1)]
 [NodeDispatchGrid(1, 1, 1)]
+[NodeID("MyConsumer", 0)]
 void MyConsumer(
-    uint GroupID : SV_GroupID,
-    uint ThreadInGroup : SV_GroupIndex
+	uint3 ThreadInGroup : SV_DispatchThreadID
 )
 {
-    StoreByte(ThreadInGroup);
+	StoreByte(ThreadInGroup.x);
 }
